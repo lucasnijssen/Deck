@@ -1,6 +1,12 @@
-# Deck
+<p align="center">
+  <img src="./logo.png" alt="Deck logo" width="140" />
+</p>
 
-> A native macOS Stream Deck client built with Swift 6, SwiftUI, and IOKit.
+<h1 align="center">Deck</h1>
+
+<p align="center">
+  A native macOS Stream Deck client built with Swift 6, SwiftUI, and IOKit.
+</p>
 
 Deck is a macOS 14+ replacement for Elgato's Electron-based Stream Deck app.  
 It talks to real hardware over HID, renders button artwork natively, and keeps the configuration UI fast, local, and Mac-native.
