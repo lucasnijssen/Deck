@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.png" alt="Deck logo" width="140" />
+  <img src="./logo.png" alt="Deck logo" width="220" />
 </p>
 
 <h1 align="center">Deck</h1>
