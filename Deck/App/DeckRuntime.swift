@@ -11,23 +11,29 @@ final class DeckRuntime: ObservableObject {
         let appIconStyle: StreamDeckButtonAppIconStyle
         let label: String
         let secondaryLabel: String
+        let timeStyle: TimeAction.Style?
+        let timeDate: Date?
         let backgroundStyle: StreamDeckButtonBackgroundStyle
+        let isPinned: Bool
     }
 
     @Published private(set) var devices: [StreamDeckDeviceSnapshot]
     @Published private var latestEvents: [String: ButtonEvent]
     @Published private(set) var layout = DeckLayout()
     @Published var previewModel: StreamDeckModel = .mk2
+    @Published private(set) var currentDate: Date
     @Published private(set) var lastExecutionError: String?
 
     private let manager: StreamDeckManager?
     private let imageRenderer: ButtonImageRenderer
     private let layoutStore: DeckLayoutStore
+    private var clockTimer: AnyCancellable?
     private(set) var layoutPath: String?
 
     init(previewDevices: [StreamDeckDeviceSnapshot] = []) {
         devices = previewDevices
         latestEvents = [:]
+        currentDate = Date()
         imageRenderer = ButtonImageRenderer()
         layoutStore = DeckLayoutStore()
         layoutPath = nil
@@ -100,6 +106,10 @@ final class DeckRuntime: ObservableObject {
         layout.currentAssignments
     }
 
+    func isPinnedAction(at index: Int) -> Bool {
+        layout.isPinned(at: index)
+    }
+
     var supportsBrightness: Bool {
         editorModel.supportsBrightness
     }
@@ -122,9 +132,15 @@ final class DeckRuntime: ObservableObject {
     }
 
     func assignAction(_ action: DeckAction, to index: Int) {
-        var assignments = layout.currentAssignments
-        assignments[index] = action
-        layout.currentAssignments = assignments
+        if layout.isPinned(at: index) {
+            layout.removePageAssignments(at: index)
+            layout.pinnedAssignments[index] = action
+        } else {
+            var assignments = layout.currentPageAssignments
+            assignments[index] = action
+            layout.currentPageAssignments = assignments
+        }
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -132,9 +148,43 @@ final class DeckRuntime: ObservableObject {
     }
 
     func removeAction(at index: Int) {
-        var assignments = layout.currentAssignments
-        assignments.removeValue(forKey: index)
-        layout.currentAssignments = assignments
+        if layout.isPinned(at: index) {
+            layout.pinnedAssignments.removeValue(forKey: index)
+        } else {
+            var assignments = layout.currentPageAssignments
+            assignments.removeValue(forKey: index)
+            layout.currentPageAssignments = assignments
+        }
+        updateClockRefreshState()
+        persistLayout()
+        Task {
+            await rerenderConnectedDecks()
+        }
+    }
+
+    func pinAction(at index: Int) {
+        guard !layout.isPinned(at: index), let action = layout.currentAssignments[index] else {
+            return
+        }
+
+        layout.removePageAssignments(at: index)
+        layout.pinnedAssignments[index] = action
+        updateClockRefreshState()
+        persistLayout()
+        Task {
+            await rerenderConnectedDecks()
+        }
+    }
+
+    func unpinAction(at index: Int) {
+        guard let action = layout.pinnedAssignments.removeValue(forKey: index) else {
+            return
+        }
+
+        var assignments = layout.currentPageAssignments
+        assignments[index] = action
+        layout.currentPageAssignments = assignments
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -146,21 +196,49 @@ final class DeckRuntime: ObservableObject {
             return
         }
 
-        var assignments = layout.currentAssignments
-        guard let sourceAction = assignments[sourceIndex] else {
+        let sourceIsPinned = layout.isPinned(at: sourceIndex)
+        let targetIsPinned = layout.isPinned(at: targetIndex)
+        let sourceAction = layout.currentAssignments[sourceIndex]
+        let targetAction = layout.currentAssignments[targetIndex]
+
+        guard let sourceAction else {
             return
         }
 
-        let targetAction = assignments[targetIndex]
-        assignments[targetIndex] = sourceAction
+        var pageAssignments = layout.currentPageAssignments
+        var pinnedAssignments = layout.pinnedAssignments
 
-        if let targetAction {
-            assignments[sourceIndex] = targetAction
+        if sourceIsPinned {
+            pinnedAssignments.removeValue(forKey: sourceIndex)
         } else {
-            assignments.removeValue(forKey: sourceIndex)
+            pageAssignments.removeValue(forKey: sourceIndex)
         }
 
-        layout.currentAssignments = assignments
+        if targetIsPinned {
+            pinnedAssignments.removeValue(forKey: targetIndex)
+        } else {
+            pageAssignments.removeValue(forKey: targetIndex)
+        }
+
+        if sourceIsPinned {
+            layout.removePageAssignments(at: targetIndex)
+            pinnedAssignments[targetIndex] = sourceAction
+        } else {
+            pageAssignments[targetIndex] = sourceAction
+        }
+
+        if let targetAction {
+            if targetIsPinned {
+                layout.removePageAssignments(at: sourceIndex)
+                pinnedAssignments[sourceIndex] = targetAction
+            } else {
+                pageAssignments[sourceIndex] = targetAction
+            }
+        }
+
+        layout.pinnedAssignments = pinnedAssignments
+        layout.currentPageAssignments = pageAssignments
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -173,6 +251,7 @@ final class DeckRuntime: ObservableObject {
         }
 
         layout.selectedPageIndex = index
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -183,6 +262,7 @@ final class DeckRuntime: ObservableObject {
         layout.pages.append(DeckPage())
         ensureDefaultPageActions(for: editorModel)
         layout.selectedPageIndex = layout.pages.count - 1
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -196,6 +276,7 @@ final class DeckRuntime: ObservableObject {
 
         layout.pages.remove(at: layout.selectedPageIndex)
         layout.selectedPageIndex = min(layout.selectedPageIndex, layout.pages.count - 1)
+        updateClockRefreshState()
         persistLayout()
         Task {
             await rerenderConnectedDecks()
@@ -220,6 +301,7 @@ final class DeckRuntime: ObservableObject {
         }
 
         sanitizePageActionsAfterPageDeletion(deletedPageID: id)
+        updateClockRefreshState()
 
         persistLayout()
         Task {
@@ -318,7 +400,9 @@ final class DeckRuntime: ObservableObject {
         do {
             layout = try await layoutStore.load()
             layoutPath = await layoutStore.path()
+            layout.sanitizePinnedAssignments()
             ensureDefaultPageActions(for: editorModel)
+            updateClockRefreshState()
             await rerenderConnectedDecks()
         } catch {
             print("[Layout] Failed to load layout: \(error)")
@@ -385,6 +469,8 @@ final class DeckRuntime: ObservableObject {
                 await goToRelativePage(offset: 1)
             case .goToPage(let action):
                 await goToPage(id: action.targetPageID)
+            case .time:
+                lastExecutionError = nil
             case .pageIndicator:
                 lastExecutionError = nil
             default:
@@ -425,13 +511,20 @@ final class DeckRuntime: ObservableObject {
     private func imageData(for model: StreamDeckModel, index: Int, isPressed: Bool) throws -> Data {
         let buttonDisplay = buttonDisplay(for: index)
 
-        if buttonDisplay.systemName != nil || buttonDisplay.appIconBundleIdentifier != nil || !buttonDisplay.label.isEmpty {
+        if
+            buttonDisplay.systemName != nil ||
+            buttonDisplay.appIconBundleIdentifier != nil ||
+            buttonDisplay.timeStyle != nil ||
+            !buttonDisplay.label.isEmpty
+        {
             return try imageRenderer.renderButton(
                 systemName: buttonDisplay.systemName,
                 appIconBundleIdentifier: buttonDisplay.appIconBundleIdentifier,
                 appIconStyle: buttonDisplay.appIconStyle,
                 label: buttonDisplay.label,
                 secondaryLabel: buttonDisplay.secondaryLabel,
+                timeStyle: buttonDisplay.timeStyle,
+                timeDate: buttonDisplay.timeDate,
                 backgroundStyle: buttonDisplay.backgroundStyle,
                 for: model,
                 isPressed: isPressed
@@ -442,8 +535,20 @@ final class DeckRuntime: ObservableObject {
     }
 
     func buttonDisplay(for index: Int) -> ButtonDisplay {
+        let isPinned = layout.isPinned(at: index)
+
         guard let action = layout.currentAssignments[index] else {
-            return ButtonDisplay(systemName: nil, appIconBundleIdentifier: nil, appIconStyle: .inline, label: "", secondaryLabel: "", backgroundStyle: .empty)
+            return ButtonDisplay(
+                systemName: nil,
+                appIconBundleIdentifier: nil,
+                appIconStyle: .inline,
+                label: "",
+                secondaryLabel: "",
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .empty,
+                isPinned: false
+            )
         }
 
         switch action {
@@ -454,7 +559,10 @@ final class DeckRuntime: ObservableObject {
                 appIconStyle: .inline,
                 label: action.shortLabel,
                 secondaryLabel: "",
-                backgroundStyle: .black
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .black,
+                isPinned: isPinned
             )
         case .nextPage:
             return ButtonDisplay(
@@ -463,13 +571,39 @@ final class DeckRuntime: ObservableObject {
                 appIconStyle: .inline,
                 label: action.shortLabel,
                 secondaryLabel: "",
-                backgroundStyle: .black
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .black,
+                isPinned: isPinned
+            )
+        case .time(let action):
+            let caption = action.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return ButtonDisplay(
+                systemName: nil,
+                appIconBundleIdentifier: nil,
+                appIconStyle: .inline,
+                label: "",
+                secondaryLabel: caption,
+                timeStyle: action.style,
+                timeDate: currentDate,
+                backgroundStyle: .black,
+                isPinned: isPinned
             )
         case .goToPage(let action):
             let label = DeckAction.goToPage(action).shortLabel.isEmpty
                 ? goToPageLabel(for: action)
                 : DeckAction.goToPage(action).shortLabel
-            return ButtonDisplay(systemName: "number.square", appIconBundleIdentifier: nil, appIconStyle: .inline, label: label, secondaryLabel: "", backgroundStyle: .black)
+            return ButtonDisplay(
+                systemName: "number.square",
+                appIconBundleIdentifier: nil,
+                appIconStyle: .inline,
+                label: label,
+                secondaryLabel: "",
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .black,
+                isPinned: isPinned
+            )
         case .pageIndicator:
             let indicatorTitle = action.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return ButtonDisplay(
@@ -478,7 +612,10 @@ final class DeckRuntime: ObservableObject {
                 appIconStyle: .inline,
                 label: "\(layout.selectedPageIndex + 1)",
                 secondaryLabel: indicatorTitle,
-                backgroundStyle: .black
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .black,
+                isPinned: isPinned
             )
         case .launchApp(let action):
             return ButtonDisplay(
@@ -487,7 +624,10 @@ final class DeckRuntime: ObservableObject {
                 appIconStyle: .fullKey,
                 label: "",
                 secondaryLabel: "",
-                backgroundStyle: .black
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: .black,
+                isPinned: isPinned
             )
         default:
             return ButtonDisplay(
@@ -496,7 +636,10 @@ final class DeckRuntime: ObservableObject {
                 appIconStyle: .inline,
                 label: action.shortLabel,
                 secondaryLabel: "",
-                backgroundStyle: action.buttonBackgroundStyle
+                timeStyle: nil,
+                timeDate: nil,
+                backgroundStyle: action.buttonBackgroundStyle,
+                isPinned: isPinned
             )
         }
     }
@@ -512,6 +655,7 @@ final class DeckRuntime: ObservableObject {
         }
 
         layout.selectedPageIndex = targetIndex
+        updateClockRefreshState()
         persistLayout()
         await rerenderConnectedDecks()
     }
@@ -526,6 +670,7 @@ final class DeckRuntime: ObservableObject {
         }
 
         layout.selectedPageIndex = targetIndex
+        updateClockRefreshState()
         persistLayout()
         await rerenderConnectedDecks()
     }
@@ -548,24 +693,27 @@ final class DeckRuntime: ObservableObject {
 
         for pageIndex in layout.pages.indices {
             var assignments = layout.pages[pageIndex].assignments
+            var visibleAssignments = layout.mergedAssignments(forPageAt: pageIndex)
 
-            if pageIndex > 0, !assignments.values.contains(where: \.isPreviousPageAction) {
+            if pageIndex > 0, !visibleAssignments.values.contains(where: \.isPreviousPageAction) {
                 if let insertionIndex = preferredPageActionIndex(
                     preferredIndex: model.buttonCount - model.grid.columns,
-                    assignments: assignments,
+                    assignments: visibleAssignments,
                     model: model
                 ) {
                     assignments[insertionIndex] = .previousPage(PreviousPageAction())
+                    visibleAssignments[insertionIndex] = .previousPage(PreviousPageAction())
                 }
             }
 
-            if pageIndex < layout.pageCount - 1, !assignments.values.contains(where: \.isNextPageAction) {
+            if pageIndex < layout.pageCount - 1, !visibleAssignments.values.contains(where: \.isNextPageAction) {
                 if let insertionIndex = preferredPageActionIndex(
                     preferredIndex: model.buttonCount - 1,
-                    assignments: assignments,
+                    assignments: visibleAssignments,
                     model: model
                 ) {
                     assignments[insertionIndex] = .nextPage(NextPageAction())
+                    visibleAssignments[insertionIndex] = .nextPage(NextPageAction())
                 }
             }
 
@@ -597,5 +745,55 @@ final class DeckRuntime: ObservableObject {
             }
             layout.pages[pageIndex].assignments = assignments
         }
+
+        layout.pinnedAssignments = layout.pinnedAssignments.filter { _, action in
+            if case .goToPage(let goToPageAction) = action {
+                return goToPageAction.targetPageID != deletedPageID
+            }
+
+            return true
+        }
+    }
+
+    private func updateClockRefreshState() {
+        currentDate = Date()
+
+        let hasTimeActions =
+            layout.pinnedAssignments.values.contains(where: \.isTimeAction) ||
+            layout.pages.contains { page in
+                page.assignments.values.contains(where: \.isTimeAction)
+            }
+
+        guard hasTimeActions else {
+            clockTimer?.cancel()
+            clockTimer = nil
+            return
+        }
+
+        guard clockTimer == nil else {
+            return
+        }
+
+        clockTimer = Timer.publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] now in
+                guard let self else {
+                    return
+                }
+
+                let calendar = Calendar.autoupdatingCurrent
+                let previousComponents = calendar.dateComponents([.hour, .minute], from: self.currentDate)
+                let nextComponents = calendar.dateComponents([.hour, .minute], from: now)
+
+                guard previousComponents != nextComponents else {
+                    return
+                }
+
+                self.currentDate = now
+
+                Task {
+                    await self.rerenderConnectedDecks()
+                }
+            }
     }
 }

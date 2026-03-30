@@ -8,6 +8,7 @@ enum ActionKind: String, CaseIterable, Identifiable {
     case shellScript
     case openURL
     case media
+    case time
     case previousPage
     case nextPage
     case goToPage
@@ -27,6 +28,8 @@ enum ActionKind: String, CaseIterable, Identifiable {
             "Open URL"
         case .media:
             "Media"
+        case .time:
+            "Time"
         case .previousPage:
             "Previous Page"
         case .nextPage:
@@ -50,6 +53,8 @@ enum ActionKind: String, CaseIterable, Identifiable {
             "link"
         case .media:
             "playpause.fill"
+        case .time:
+            "clock"
         case .previousPage:
             "arrow.left"
         case .nextPage:
@@ -63,12 +68,14 @@ enum ActionKind: String, CaseIterable, Identifiable {
 
     var category: ActionLibraryCategory {
         switch self {
-        case .launchApp, .openURL, .previousPage, .nextPage, .goToPage, .pageIndicator:
+        case .launchApp, .openURL, .previousPage, .nextPage, .goToPage:
             .navigation
         case .keystroke, .shellScript:
             .automation
         case .media:
             .media
+        case .time, .pageIndicator:
+            .display
         }
     }
 
@@ -84,6 +91,8 @@ enum ActionKind: String, CaseIterable, Identifiable {
             "Open a website or deep link."
         case .media:
             "Control system media playback."
+        case .time:
+            "Show the current local time."
         case .previousPage:
             "Move to the previous page."
         case .nextPage:
@@ -134,6 +143,13 @@ enum ActionKind: String, CaseIterable, Identifiable {
                     command: .playPause
                 )
             )
+        case .time:
+            .time(
+                TimeAction(
+                    title: nil,
+                    style: .digital
+                )
+            )
         case .previousPage:
             .previousPage(PreviousPageAction(title: nil))
         case .nextPage:
@@ -151,11 +167,13 @@ enum ActionLibraryCategory: String, CaseIterable, Identifiable {
     case navigation
     case automation
     case media
+    case display
 
     static let sidebarCases: [ActionLibraryCategory] = [
         .navigation,
         .automation,
-        .media
+        .media,
+        .display
     ]
 
     var id: String { rawValue }
@@ -170,6 +188,8 @@ enum ActionLibraryCategory: String, CaseIterable, Identifiable {
             "Automation"
         case .media:
             "Media"
+        case .display:
+            "Display"
         }
     }
 
@@ -183,6 +203,8 @@ enum ActionLibraryCategory: String, CaseIterable, Identifiable {
             "terminal"
         case .media:
             "speaker.wave.2"
+        case .display:
+            "clock"
         }
     }
 
@@ -206,13 +228,14 @@ struct ActionDraft {
     var script: String
     var urlString: String
     var mediaCommand: MediaAction.Command
+    var timeStyle: TimeAction.Style
     var targetPageID: UUID?
 
     init(action: DeckAction?) {
         kind = .launchApp; title = ""
         bundleIdentifier = ""; appName = ""; key = ""
         modifiers = KeyboardModifiers(); script = ""
-        urlString = ""; mediaCommand = .playPause; targetPageID = nil
+        urlString = ""; mediaCommand = .playPause; timeStyle = .digital; targetPageID = nil
 
         switch action {
         case .launchApp(let a):      kind = .launchApp;      title = a.title ?? ""; bundleIdentifier = a.bundleIdentifier; appName = a.appName
@@ -220,6 +243,7 @@ struct ActionDraft {
         case .shellScript(let a):    kind = .shellScript;    title = a.title ?? ""; script = a.script
         case .openURL(let a):        kind = .openURL;        title = a.title ?? ""; urlString = a.urlString
         case .media(let a):          kind = .media;          title = a.title ?? ""; mediaCommand = a.command
+        case .time(let a):           kind = .time;           title = a.title ?? ""; timeStyle = a.style
         case .previousPage(let a):   kind = .previousPage;   title = a.title ?? ""
         case .nextPage(let a):       kind = .nextPage;       title = a.title ?? ""
         case .goToPage(let a):       kind = .goToPage;       title = a.title ?? ""; targetPageID = a.targetPageID
@@ -279,6 +303,14 @@ struct ActionDraft {
                     command: mediaCommand
                 )
             )
+        case .time:
+            return .time(
+                TimeAction(
+                    id: existingID ?? UUID(),
+                    title: storedTitle,
+                    style: timeStyle
+                )
+            )
         case .previousPage:
             return .previousPage(
                 PreviousPageAction(
@@ -328,6 +360,7 @@ extension ActionDraft {
             script,
             urlString,
             mediaCommand.rawValue,
+            timeStyle.rawValue,
             targetPageID?.uuidString ?? ""
         ].joined(separator: "\u{1F}")
     }
@@ -355,6 +388,8 @@ extension ActionDraft {
             case .previousTrack:
                 "backward.fill"
             }
+        case .time:
+            nil
         case .previousPage:
             "arrow.left"
         case .nextPage:
@@ -370,7 +405,7 @@ extension ActionDraft {
         switch kind {
         case .launchApp where previewAppIconBundleIdentifier != nil:
             .black
-        case .previousPage, .nextPage, .goToPage, .pageIndicator:
+        case .time, .previousPage, .nextPage, .goToPage, .pageIndicator:
             .black
         default:
             .standard
@@ -425,6 +460,8 @@ struct ActionFormView: View {
                     appIconStyle: draft.previewAppIconStyle,
                     label: previewLabel,
                     secondaryLabel: previewSecondaryLabel,
+                    timeStyle: previewTimeStyle,
+                    timeDate: Date(),
                     backgroundStyle: draft.previewBackgroundStyle,
                     isPressed: false,
                     style: .editor
@@ -560,6 +597,21 @@ struct ActionFormView: View {
                     }
                 }
             }
+        case .time:
+            GroupBox("Time") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Style", selection: $draft.timeStyle) {
+                        ForEach(TimeAction.Style.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    }
+
+                    Text("Shows the current local time and updates automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         case .previousPage:
             GroupBox("Behavior") {
                 Text("Moves to the previous page when released.")
@@ -591,7 +643,7 @@ struct ActionFormView: View {
     }
 
     private var previewLabel: String? {
-        if draft.kind != .pageIndicator && !draft.trimmedTitle.isEmpty {
+        if draft.kind != .pageIndicator && draft.kind != .time && !draft.trimmedTitle.isEmpty {
             return draft.trimmedTitle
         }
 
@@ -612,6 +664,8 @@ struct ActionFormView: View {
             return url.isEmpty ? "Open URL" : url
         case .media:
             return draft.mediaCommand.title
+        case .time:
+            return nil
         case .previousPage, .nextPage:
             return nil
         case .goToPage:
@@ -627,6 +681,11 @@ struct ActionFormView: View {
 
     private var previewSecondaryLabel: String? {
         switch draft.kind {
+        case .time:
+            guard draft.timeStyle == .digital else {
+                return nil
+            }
+            return draft.trimmedTitle.isEmpty ? nil : draft.trimmedTitle
         case .pageIndicator:
             return draft.trimmedTitle.isEmpty ? nil : draft.trimmedTitle
         default:
@@ -634,8 +693,16 @@ struct ActionFormView: View {
         }
     }
 
+    private var previewTimeStyle: TimeAction.Style? {
+        draft.kind == .time ? draft.timeStyle : nil
+    }
+
     private var titlePrompt: String {
         switch draft.kind {
+        case .time:
+            return draft.timeStyle == .digital
+                ? "Optional small caption below the time"
+                : "Digital mode only"
         case .previousPage, .nextPage:
             return "Leave empty for icon only"
         case .pageIndicator:
@@ -647,10 +714,26 @@ struct ActionFormView: View {
 
     private var titleHelperText: String? {
         if !draft.trimmedTitle.isEmpty {
+            if draft.kind == .time {
+                return draft.timeStyle == .digital
+                    ? "Shown as the small caption below the live time."
+                    : "Analog mode fills the whole key, so this title is hidden."
+            }
+
+            if draft.kind == .pageIndicator {
+                return "Shown as the small caption below the page number."
+            }
+
             return "Shown on the key as “\(draft.trimmedTitle)”."
         }
 
         switch draft.kind {
+        case .time:
+            return draft.timeStyle == .digital
+                ? (draft.trimmedTitle.isEmpty
+                ? "Leaving this empty shows only the live time."
+                : "This title appears as the small caption below the time.")
+                : "Analog style uses the full key as the watch face."
         case .previousPage, .nextPage:
             return "This key stays icon-only until you enter a title."
         case .pageIndicator:
@@ -679,6 +762,10 @@ struct ActionFormView: View {
             return "Open a website or deep link."
         case .media:
             return "Control the active media app."
+        case .time:
+            return draft.timeStyle == .analog
+                ? "Display a full-key analog watch face on the key."
+                : "Display the current local time on the key."
         case .previousPage:
             return "Navigate to the previous page."
         case .nextPage:

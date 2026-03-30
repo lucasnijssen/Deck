@@ -19,6 +19,8 @@ struct SettingsView: View {
             onSelect: selectButton(_:),
             onDropActionKind: { index, kind in handleDroppedAction(kind, on: index) },
             onMoveAction: { sourceIndex, targetIndex in moveActionOnCanvas(from: sourceIndex, to: targetIndex) },
+            onPinAction: { index in pinActionOnCanvas(at: index) },
+            onUnpinAction: { index in unpinActionOnCanvas(at: index) },
             onDeleteAction: { index in deleteActionFromCanvas(at: index) }
         )
     }
@@ -298,6 +300,22 @@ struct SettingsView: View {
         validateSelection()
     }
 
+    private func pinActionOnCanvas(at index: Int) {
+        runtime.pinAction(at: index)
+        if selectedButtonIndex == index {
+            draft = ActionDraft(action: runtime.currentAssignments[index])
+        }
+        validateSelection()
+    }
+
+    private func unpinActionOnCanvas(at index: Int) {
+        runtime.unpinAction(at: index)
+        if selectedButtonIndex == index {
+            draft = ActionDraft(action: runtime.currentAssignments[index])
+        }
+        validateSelection()
+    }
+
     private func selectButton(_ index: Int) {
         selectedButtonIndex = index
         draft = ActionDraft(action: runtime.currentAssignments[index])
@@ -343,6 +361,9 @@ struct SettingsView: View {
 
     private func inspectorSubtitle(for index: Int) -> String {
         if let action = runtime.currentAssignments[index] {
+            if runtime.isPinnedAction(at: index) {
+                return "\(action.kindTitle) • Pinned to all pages"
+            }
             return action.kindTitle
         }
         return "No action assigned"
@@ -705,6 +726,7 @@ private extension ActionKind {
         case .shellScript:   .orange
         case .openURL:       .teal
         case .media:         Color(red: 0.88, green: 0.18, blue: 0.38)
+        case .time:          .cyan
         case .previousPage:  Color(nsColor: .systemGray)
         case .nextPage:      Color(nsColor: .systemGray)
         case .goToPage:      .indigo

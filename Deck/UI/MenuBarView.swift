@@ -30,18 +30,6 @@ struct MenuBarView: View {
     }
 
     private var deviceStatusRow: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(runtime.activeDevice != nil
-                        ? Color.green.opacity(0.15)
-                        : Color(nsColor: .secondaryLabelColor).opacity(0.1))
-                    .frame(width: 36, height: 36)
-                Image(systemName: "rectangle.grid.3x2")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(runtime.activeDevice != nil ? Color.green : Color(nsColor: .secondaryLabelColor))
-            }
-
             VStack(alignment: .leading, spacing: 1) {
                 if let device = runtime.activeDevice {
                     Text(device.model.displayName)
@@ -57,7 +45,6 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
     }
 }
 

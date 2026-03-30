@@ -109,6 +109,7 @@ enum DeckAction: Action {
     case shellScript(ShellScriptAction)
     case openURL(OpenURLAction)
     case media(MediaAction)
+    case time(TimeAction)
     case previousPage(PreviousPageAction)
     case nextPage(NextPageAction)
     case goToPage(GoToPageAction)
@@ -125,6 +126,8 @@ enum DeckAction: Action {
         case .openURL(let action):
             action.id
         case .media(let action):
+            action.id
+        case .time(let action):
             action.id
         case .previousPage(let action):
             action.id
@@ -149,6 +152,8 @@ enum DeckAction: Action {
             action.name
         case .media(let action):
             action.name
+        case .time(let action):
+            action.name
         case .previousPage(let action):
             action.name
         case .nextPage(let action):
@@ -171,6 +176,8 @@ enum DeckAction: Action {
         case .openURL(let action):
             action.iconSystemName
         case .media(let action):
+            action.iconSystemName
+        case .time(let action):
             action.iconSystemName
         case .previousPage(let action):
             action.iconSystemName
@@ -195,6 +202,8 @@ enum DeckAction: Action {
             "Open URL"
         case .media:
             "Media"
+        case .time:
+            "Time"
         case .previousPage:
             "Previous Page"
         case .nextPage:
@@ -217,6 +226,8 @@ enum DeckAction: Action {
         case .openURL(let action):
             action.title
         case .media(let action):
+            action.title
+        case .time(let action):
             action.title
         case .previousPage(let action):
             action.title
@@ -246,6 +257,8 @@ enum DeckAction: Action {
             return action.urlString.isEmpty ? "Open URL" : action.urlString
         case .media(let action):
             return action.command.title
+        case .time:
+            return ""
         case .previousPage:
             return ""
         case .nextPage:
@@ -273,11 +286,19 @@ enum DeckAction: Action {
 
     var buttonBackgroundStyle: StreamDeckButtonBackgroundStyle {
         switch self {
-        case .previousPage, .nextPage, .goToPage, .pageIndicator:
+        case .time, .previousPage, .nextPage, .goToPage, .pageIndicator:
             .black
         default:
             .standard
         }
+    }
+
+    var isTimeAction: Bool {
+        if case .time = self {
+            return true
+        }
+
+        return false
     }
 
     var isPreviousPageAction: Bool {
@@ -320,6 +341,8 @@ enum DeckAction: Action {
         case .openURL(let action):
             try await action.execute()
         case .media(let action):
+            try await action.execute()
+        case .time(let action):
             try await action.execute()
         case .previousPage(let action):
             try await action.execute()

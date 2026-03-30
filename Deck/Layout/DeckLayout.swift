@@ -12,11 +12,18 @@ struct DeckPage: Codable, Identifiable, Sendable {
 
 struct DeckLayout: Codable, Sendable {
     var pages: [DeckPage]
+    var pinnedAssignments: [Int: DeckAction]
     var selectedPageIndex: Int
     var brightness: Int
 
-    init(pages: [DeckPage] = [DeckPage()], selectedPageIndex: Int = 0, brightness: Int = 100) {
+    init(
+        pages: [DeckPage] = [DeckPage()],
+        pinnedAssignments: [Int: DeckAction] = [:],
+        selectedPageIndex: Int = 0,
+        brightness: Int = 100
+    ) {
         self.pages = pages.isEmpty ? [DeckPage()] : pages
+        self.pinnedAssignments = pinnedAssignments
         self.selectedPageIndex = min(max(0, selectedPageIndex), self.pages.count - 1)
         self.brightness = brightness
     }
@@ -34,7 +41,7 @@ struct DeckLayout: Codable, Sendable {
         }
     }
 
-    var currentAssignments: [Int: DeckAction] {
+    var currentPageAssignments: [Int: DeckAction] {
         get {
             currentPage.assignments
         }
@@ -45,8 +52,41 @@ struct DeckLayout: Codable, Sendable {
         }
     }
 
+    var currentAssignments: [Int: DeckAction] {
+        mergedAssignments(forPageAt: selectedPageIndex)
+    }
+
+    func mergedAssignments(forPageAt pageIndex: Int) -> [Int: DeckAction] {
+        guard pages.indices.contains(pageIndex) else {
+            return pinnedAssignments
+        }
+
+        var assignments = pages[pageIndex].assignments
+        for (index, action) in pinnedAssignments {
+            assignments[index] = action
+        }
+        return assignments
+    }
+
+    func isPinned(at index: Int) -> Bool {
+        pinnedAssignments[index] != nil
+    }
+
+    mutating func removePageAssignments(at index: Int) {
+        for pageIndex in pages.indices {
+            pages[pageIndex].assignments.removeValue(forKey: index)
+        }
+    }
+
+    mutating func sanitizePinnedAssignments() {
+        for index in pinnedAssignments.keys {
+            removePageAssignments(at: index)
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case pages
+        case pinnedAssignments
         case selectedPageIndex
         case assignments
         case brightness
@@ -64,6 +104,7 @@ struct DeckLayout: Codable, Sendable {
             selectedPageIndex = 0
         }
 
+        pinnedAssignments = try container.decodeIfPresent([Int: DeckAction].self, forKey: .pinnedAssignments) ?? [:]
         selectedPageIndex = min(max(0, selectedPageIndex), pages.count - 1)
         brightness = try container.decodeIfPresent(Int.self, forKey: .brightness) ?? 100
     }
@@ -71,6 +112,7 @@ struct DeckLayout: Codable, Sendable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(pages, forKey: .pages)
+        try container.encode(pinnedAssignments, forKey: .pinnedAssignments)
         try container.encode(selectedPageIndex, forKey: .selectedPageIndex)
         try container.encode(brightness, forKey: .brightness)
     }

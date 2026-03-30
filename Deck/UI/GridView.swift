@@ -14,6 +14,8 @@ struct GridView: View {
     let onSelect: (Int) -> Void
     let onDropActionKind: (Int, ActionKind) -> Void
     let onMoveAction: (Int, Int) -> Void
+    let onPinAction: (Int) -> Void
+    let onUnpinAction: (Int) -> Void
     let onDeleteAction: (Int) -> Void
 
     private let buttonSpacing: CGFloat = 12
@@ -57,8 +59,9 @@ struct GridView: View {
                     isSelected: selectedIndex == index,
                     onSelect: onSelect,
                     onDropActionKind: onDropActionKind,
-                    onMoveAction: onMoveAction
-                    ,
+                    onMoveAction: onMoveAction,
+                    onPinAction: onPinAction,
+                    onUnpinAction: onUnpinAction,
                     onDeleteAction: onDeleteAction
                 )
             }
@@ -77,6 +80,8 @@ private struct GridButtonCell: View {
     let onSelect: (Int) -> Void
     let onDropActionKind: (Int, ActionKind) -> Void
     let onMoveAction: (Int, Int) -> Void
+    let onPinAction: (Int) -> Void
+    let onUnpinAction: (Int) -> Void
     let onDeleteAction: (Int) -> Void
 
     @State private var isDropTarget = false
@@ -91,11 +96,14 @@ private struct GridButtonCell: View {
                 appIconStyle: buttonDisplay.appIconStyle,
                 label: buttonDisplay.label.isEmpty ? nil : buttonDisplay.label,
                 secondaryLabel: buttonDisplay.secondaryLabel.isEmpty ? nil : buttonDisplay.secondaryLabel,
+                timeStyle: buttonDisplay.timeStyle,
+                timeDate: buttonDisplay.timeDate,
                 backgroundStyle: action == nil ? .empty : buttonDisplay.backgroundStyle,
                 isPressed: isPressed,
                 style: .editor
             )
             .frame(width: size, height: size)
+            .opacity(buttonDisplay.isPinned ? 0.82 : 1)
             .overlay(alignment: .center) {
                 RoundedRectangle(cornerRadius: StreamDeckButtonFaceView.cornerRadius, style: .continuous)
                     .strokeBorder(overlayColor, lineWidth: overlayColor == .clear ? 0 : 3)
@@ -108,6 +116,16 @@ private struct GridButtonCell: View {
             }
 
             if action != nil {
+                if buttonDisplay.isPinned {
+                    Button("Unpin") {
+                        onUnpinAction(index)
+                    }
+                } else {
+                    Button("Pin to All Pages") {
+                        onPinAction(index)
+                    }
+                }
+
                 Button("Delete", role: .destructive) {
                     onDeleteAction(index)
                 }
@@ -120,6 +138,8 @@ private struct GridButtonCell: View {
                 appIconStyle: buttonDisplay.appIconStyle,
                 label: buttonDisplay.label.isEmpty ? nil : buttonDisplay.label,
                 secondaryLabel: buttonDisplay.secondaryLabel.isEmpty ? nil : buttonDisplay.secondaryLabel,
+                timeStyle: buttonDisplay.timeStyle,
+                timeDate: buttonDisplay.timeDate,
                 backgroundStyle: action == nil ? .empty : buttonDisplay.backgroundStyle,
                 isPressed: false,
                 style: .editor
